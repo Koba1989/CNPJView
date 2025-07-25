@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CNPJView</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- SheetJS (xlsx) library for Excel export -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+    <style>
+        /* Estilo customizado para a fonte Inter */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Animação de carregamento */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 4px solid #c084fc; /* Lilás */
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Classe para o texto em degradê */
+        .text-gradient {
+          background-image: linear-gradient(45deg, #a855f7, #d946ef, #ec4899);
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+        }
+        /* Estilo para botão desabilitado */
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="bg-white">
+
+    <div class="w-full max-w-3xl mx-auto my-8 p-4">
+        <div class="bg-white shadow-2xl shadow-purple-200/50 rounded-2xl p-6 md:p-8">
+            <div class="text-center mb-8">
+                <h1 class="text-4xl md:text-5xl font-bold text-gradient">CNPJView</h1>
+                <p class="text-gray-500 mt-2">Consulte um ou mais CNPJs de forma rápida.</p>
+            </div>
+
+            <!-- Formulário de Busca em Massa -->
+            <div class="flex flex-col gap-4 mb-6">
+                <textarea id="cnpj-input" rows="6" placeholder="00.000.000/0000-00&#10;11.111.111/0001-11&#10;..." class="flex-grow bg-purple-50/50 border border-purple-200 text-gray-700 text-lg rounded-lg focus:ring-purple-500 focus:border-purple-500 block w-full p-4"></textarea>
+                <button id="search-btn" class="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 px-8 rounded-lg text-lg transition-all duration-300 flex items-center justify-center shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    Buscar em Massa
+                </button>
+            </div>
+
+            <!-- Progresso e Resultados -->
+            <div id="progress-container" class="hidden my-4 text-center">
+                <div id="loader" class="mx-auto loader"></div>
+                <p id="progress-text" class="text-purple-800 mt-2 font-semibold"></p>
+            </div>
+
+            <div id="results-container"></div>
+
+            <!-- Botão de Exportar para Excel -->
+            <div id="export-container" class="hidden mt-8 text-center">
+                <button id="export-btn" class="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-3 px-6 rounded-lg text-lg transition-all duration-300 flex items-center justify-center mx-auto shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Exportar Resultados para Excel
+                </button>
+            </div>
+        </div>
+        <footer class="text-center mt-6 text-sm text-gray-500">
+            <p>Desenvolvido por Danilo Kobayashi | API fornecida por <a href="https://brasilapi.com.br/" target="_blank" class="text-purple-500 hover:underline">BrasilAPI</a></p>
+        </footer>
+    </div>
+
+    <script>
+        // Seleção dos elementos do DOM
+        const cnpjInput = document.getElementById('cnpj-input');
+        const searchBtn = document.getElementById('search-btn');
+        const progressContainer = document.getElementById('progress-container');
+        const progressText = document.getElementById('progress-text');
+        const loader = document.getElementById('loader');
+        const resultsContainer = document.getElementById('results-container');
+        const exportContainer = document.getElementById('export-container');
+        const exportBtn = document.getElementById('export-btn');
+
+        // Variável para armazenar os dados da consulta
+        let bulkResults = { success: [], failed: [] };
+
+        // Adiciona evento de clique aos botões
+        searchBtn.addEventListener('click', searchBulkCNPJ);
+        exportBtn.addEventListener('click', exportToExcel);
+
+        // Função para criar um atraso entre as requisições
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // Função para formatar o CNPJ
+        function formatCnpj(cnpj) {
+            if (!cnpj) return '';
+            const cnpjOnlyNumbers = cnpj.replace(/\D/g, '');
+            if (cnpjOnlyNumbers.length !== 14) return cnpj; // Retorna original se não tiver 14 dígitos
+            return cnpjOnlyNumbers.replace(
+                /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+                '$1.$2.$3/$4-$5'
+            );
+        }
+
+        // Função principal para buscar os CNPJs em massa
+        async function searchBulkCNPJ() {
+            // Desabilita o botão para evitar cliques duplos
+            searchBtn.disabled = true;
+
+            try {
+                const cnpjs = cnpjInput.value.split('\n')
+                    .map(line => line.trim().replace(/\D/g, ''))
+                    .filter(cnpj => cnpj.length === 14);
+
+                if (cnpjs.length === 0) {
+                    alert("Por favor, insira pelo menos um CNPJ válido.");
+                    return;
+                }
+
+                // Reseta a interface
+                progressContainer.style.display = 'block';
+                resultsContainer.innerHTML = '';
+                exportContainer.style.display = 'none';
+                bulkResults = { success: [], failed: [] };
+                let processedCount = 0;
+
+                for (const cnpj of cnpjs) {
+                    processedCount++;
+                    progressText.textContent = `Processando ${processedCount} de ${cnpjs.length}: ${formatCnpj(cnpj)}`;
+                    
+                    try {
+                        // **MUDANÇA PRINCIPAL: Uso de um proxy mais robusto (allorigins.win)**
+                        const apiUrl = `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`;
+                        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+                        
+                        const response = await fetch(proxyUrl);
+                        
+                        if (!response.ok) {
+                            throw new Error('Falha no serviço de proxy. Tente novamente mais tarde.');
+                        }
+
+                        const dataWrapper = await response.json();
+                        const apiResponse = JSON.parse(dataWrapper.contents);
+
+                        // A BrasilAPI retorna um objeto com a propriedade 'message' em caso de erro (como 404)
+                        if (apiResponse.message) {
+                           throw new Error(apiResponse.message);
+                        }
+                        
+                        bulkResults.success.push(apiResponse);
+
+                    } catch (error) {
+                        bulkResults.failed.push({ cnpj, error: error.message });
+                    }
+                    
+                    await sleep(350); 
+                }
+
+                displayBulkResults();
+
+            } catch (e) {
+                console.error("Um erro inesperado ocorreu:", e);
+                alert("Ocorreu um erro inesperado durante o processamento. Verifique o console para mais detalhes.");
+            } finally {
+                progressContainer.style.display = 'none';
+                searchBtn.disabled = false;
+            }
+        }
+
+        // Função para exibir os resultados em massa
+        function displayBulkResults() {
+            resultsContainer.innerHTML = `<h2 class="text-2xl font-bold text-center mb-4 text-gradient">Resultados da Busca</h2>`;
+            
+            if (bulkResults.success.length > 0) {
+                const successHeader = document.createElement('h3');
+                successHeader.className = "text-xl font-semibold text-green-700 mb-2";
+                successHeader.textContent = `CNPJs Encontrados (${bulkResults.success.length})`;
+                resultsContainer.appendChild(successHeader);
+
+                bulkResults.success.forEach(data => {
+                    const card = document.createElement('div');
+                    card.className = "bg-green-50 border border-green-200 p-4 rounded-lg mb-3";
+                    card.innerHTML = `
+                        <p class="font-bold text-green-800">${data.razao_social}</p>
+                        <p class="text-sm text-gray-600">${formatCnpj(data.cnpj)}</p>
+                    `;
+                    resultsContainer.appendChild(card);
+                });
+            }
+
+            if (bulkResults.failed.length > 0) {
+                const failedHeader = document.createElement('h3');
+                failedHeader.className = "text-xl font-semibold text-red-700 mt-6 mb-2";
+                failedHeader.textContent = `CNPJs com Erro (${bulkResults.failed.length})`;
+                resultsContainer.appendChild(failedHeader);
+
+                bulkResults.failed.forEach(data => {
+                    const card = document.createElement('div');
+                    card.className = "bg-red-50 border border-red-200 p-4 rounded-lg mb-3";
+                    card.innerHTML = `
+                        <p class="font-bold text-red-800">${formatCnpj(data.cnpj)}</p>
+                        <p class="text-sm text-gray-600">Motivo: ${data.error}</p>
+                    `;
+                    resultsContainer.appendChild(card);
+                });
+            }
+
+            if (bulkResults.success.length > 0 || bulkResults.failed.length > 0) {
+                exportContainer.style.display = 'block';
+            }
+        }
+
+        // Função para exportar os dados para um arquivo Excel
+        function exportToExcel() {
+            if (bulkResults.success.length === 0 && bulkResults.failed.length === 0) {
+                alert("Não há dados para exportar.");
+                return;
+            }
+
+            const wb = XLSX.utils.book_new();
+
+            if (bulkResults.success.length > 0) {
+                const successData = bulkResults.success.map(data => ({
+                    'CNPJ': formatCnpj(data.cnpj),
+                    'Razão Social': data.razao_social,
+                    'Nome Fantasia': data.nome_fantasia,
+                    'Situação': data.descricao_situacao_cadastral,
+                    'Endereço': `${data.logradouro || ''}, ${data.numero || ''}`,
+                    'Bairro': data.bairro,
+                    'Município': data.municipio,
+                    'UF': data.uf,
+                    'CEP': data.cep,
+                    'Telefone': data.ddd_telefone_1,
+                    'E-mail': data.email,
+                    'Capital Social': data.capital_social
+                }));
+                const wsSuccess = XLSX.utils.json_to_sheet(successData);
+                wsSuccess['!cols'] = [{ wch: 18 }, { wch: 40 }, { wch: 40 }, { wch: 20 }, { wch: 40 }, { wch: 25 }, { wch: 25 }, { wch: 5 }, { wch: 12 }, { wch: 15 }, { wch: 30 }, { wch: 15 }];
+                XLSX.utils.book_append_sheet(wb, wsSuccess, "CNPJs Encontrados");
+            }
+
+            if (bulkResults.failed.length > 0) {
+                const failedData = bulkResults.failed.map(data => ({
+                    'CNPJ': formatCnpj(data.cnpj),
+                    'Erro': data.error
+                }));
+                const wsFailed = XLSX.utils.json_to_sheet(failedData);
+                wsFailed['!cols'] = [{ wch: 18 }, { wch: 50 }];
+                XLSX.utils.book_append_sheet(wb, wsFailed, "CNPJs com Erro");
+            }
+
+            XLSX.writeFile(wb, `Consulta_em_Massa_CNPJ.xlsx`);
+        }
+    </script>
+
+</body>
+</html>
